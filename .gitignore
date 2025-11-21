@@ -1,0 +1,50 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs
+*.log
+
+# IDE settings
+.vscode/
+.idea/
+*.code-workspace
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+
+# pytest cache
+.pytest_cache/
+
+# Environment variables
+.env
+*.env
+
+# Data
+data/**/*.parquet
+data/**/*.csv
+data/**/*.log
+data/**/*.zip
+
+# Polars & Temp Files
+polars_cache/
+cache/
+tmp/
+temp/
