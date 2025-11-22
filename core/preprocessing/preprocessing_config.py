@@ -13,6 +13,7 @@ PREPROCESSOR_REGISTRY = {
     DatasetId.WEATHER_CALIBRATED: SyntheticAirQualityPreprocessor(),
 
     DatasetId.LUBW_MINUTE: LUBWMinutePreprocessor(),
+
     DatasetId.AIRUP_SONT_A: AirUpSensorPreprocessor(),
     DatasetId.AIRUP_SONT_C: AirUpSensorPreprocessor(),
 }
