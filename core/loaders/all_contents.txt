@@ -1,0 +1,883 @@
+==== C:\Users\katha\CalibraFlow\core\loaders\airup_dataset_loader.py ==== 
+from pathlib import Path
+import logging
+from typing import List, Dict
+import polars as pl
+
+from core.interfaces.IDataLoader import IDataLoader
+from .dataset_ids import DatasetId
+from .dataset_config import DatasetConfig, DATASET_REGISTRY
+
+logger = logging.getLogger(__name__)
+
+
+class AirUpDatasetLoader(IDataLoader):
+    # loader for AirUp sensor directories containing multiple log files
+
+    def __init__(
+        self,
+        base_path: Path,
+        registry: Dict[DatasetId, DatasetConfig] = DATASET_REGISTRY
+    ) -> None:
+        # inject base path and registry
+        self._base_path = base_path
+        self._registry = registry
+
+    def _get_config(self, dataset_id: DatasetId) -> DatasetConfig:
+        # retrieve dataset config from injected registry
+        try:
+            return self._registry[dataset_id]
+        except KeyError as exc:
+            logger.error("No DatasetConfig registered for id=%s", dataset_id.value)
+            raise KeyError(f"No DatasetConfig registered for id={dataset_id.value}") from exc
+
+    def _resolve_pattern(self, dataset_id: DatasetId) -> str:
+        # choose filename pattern based on dataset id
+        if dataset_id == DatasetId.AIRUP_SONT_A:
+            return "airup_sont_a_avg_every_minute_data.log.*"
+        if dataset_id == DatasetId.AIRUP_SONT_C:
+            return "airup_sont_c_avg_every_minute_data.log.*"
+        raise ValueError(f"AirUpDatasetLoader does not support dataset_id={dataset_id.value}")
+
+    def load_dataset(self, dataset_id: DatasetId) -> pl.DataFrame:
+        # load and concatenate all AirUp log files for dataset id
+        config = self._get_config(dataset_id)
+        directory = self._base_path / config.relative_path
+
+        logger.debug(
+            "Loading AirUp dataset '%s' from directory '%s'",
+            dataset_id.value,
+            directory,
+        )
+
+        if not directory.exists():
+            logger.error("AirUp dataset directory not found: %s", directory)
+            raise FileNotFoundError(f"AirUp dataset directory not found: {directory}")
+
+        if not directory.is_dir():
+            logger.error("AirUp dataset path is not a directory: %s", directory)
+            raise NotADirectoryError(f"AirUp dataset path is not a directory: {directory}")
+
+        pattern = self._resolve_pattern(dataset_id)
+        files: List[Path] = sorted(directory.glob(pattern))
+
+        if not files:
+            logger.error(
+                "No AirUp log files found for dataset '%s' using pattern '%s' in '%s'",
+                dataset_id.value,
+                pattern,
+                directory,
+            )
+            raise FileNotFoundError(
+                f"No AirUp log files found for {dataset_id.value} in {directory} "
+                f"with pattern '{pattern}'"
+            )
+
+        lazy_frames: List[pl.LazyFrame] = []
+
+        for file_path in files:
+            logger.debug(
+                "Scanning AirUp log file '%s' for dataset '%s'",
+                file_path,
+                dataset_id.value
+            )
+            lf = pl.scan_csv(
+                file_path,
+                has_header=config.has_header,
+                separator=config.delimiter,
+                encoding=config.encoding,
+                null_values=config.null_values,
+            )
+            lazy_frames.append(lf)
+
+        scan = lazy_frames[0] if len(lazy_frames) == 1 else pl.concat(lazy_frames)
+        df = scan.collect()
+
+        if config.rename_columns:
+            df = df.rename(config.rename_columns)
+            logger.debug(
+                "Applied column renames for AirUp dataset '%s': %s",
+                dataset_id.value,
+                config.rename_columns,
+            )
+
+        missing = set(config.required_columns) - set(df.columns)
+        if missing:
+            logger.error(
+                "Missing required columns for AirUp dataset '%s': %s",
+                dataset_id.value,
+                sorted(missing),
+            )
+            raise ValueError(
+                f"Missing required columns for AirUp dataset {dataset_id.value}: "
+                f"{sorted(missing)}"
+            )
+
+        if config.dtypes:
+            for col_name, dtype in config.dtypes.items():
+                if col_name in df.columns:
+                    df = df.with_columns(pl.col(col_name).cast(dtype))
+                    logger.debug(
+                        "Cast column '%s' to dtype '%s' for AirUp dataset '%s'",
+                        col_name,
+                        dtype,
+                        dataset_id.value,
+                    )
+                else:
+                    logger.warning(
+                        "Configured dtype for column '%s' but column not present in AirUp dataset '%s'",
+                        col_name,
+                        dataset_id.value,
+                    )
+
+        logger.info(
+            "Loaded AirUp dataset '%s' (files=%s, rows=%s, cols=%s)",
+            dataset_id.value,
+            len(files),
+            df.height,
+            df.width,
+        )
+
+        return df
+==== C:\Users\katha\CalibraFlow\core\loaders\all_contents.txt ==== 
+==== C:\Users\katha\CalibraFlow\core\loaders\airup_dataset_loader.py ==== 
+from pathlib import Path
+import logging
+from typing import List, Dict
+import polars as pl
+
+from core.interfaces.IDataLoader import IDataLoader
+from .dataset_ids import DatasetId
+from .dataset_config import DatasetConfig, DATASET_REGISTRY
+
+logger = logging.getLogger(__name__)
+
+
+class AirUpDatasetLoader(IDataLoader):
+    # loader for AirUp sensor directories containing multiple log files
+
+    def __init__(
+        self,
+        base_path: Path,
+        registry: Dict[DatasetId, DatasetConfig] = DATASET_REGISTRY
+    ) -> None:
+        # inject base path and registry
+        self._base_path = base_path
+        self._registry = registry
+
+    def _get_config(self, dataset_id: DatasetId) -> DatasetConfig:
+        # retrieve dataset config from injected registry
+        try:
+            return self._registry[dataset_id]
+        except KeyError as exc:
+            logger.error("No DatasetConfig registered for id=%s", dataset_id.value)
+            raise KeyError(f"No DatasetConfig registered for id={dataset_id.value}") from exc
+
+    def _resolve_pattern(self, dataset_id: DatasetId) -> str:
+        # choose filename pattern based on dataset id
+        if dataset_id == DatasetId.AIRUP_SONT_A:
+            return "airup_sont_a_avg_every_minute_data.log.*"
+        if dataset_id == DatasetId.AIRUP_SONT_C:
+            return "airup_sont_c_avg_every_minute_data.log.*"
+        raise ValueError(f"AirUpDatasetLoader does not support dataset_id={dataset_id.value}")
+
+    def load_dataset(self, dataset_id: DatasetId) -> pl.DataFrame:
+        # load and concatenate all AirUp log files for dataset id
+        config = self._get_config(dataset_id)
+        directory = self._base_path / config.relative_path
+
+        logger.debug(
+            "Loading AirUp dataset '%s' from directory '%s'",
+            dataset_id.value,
+            directory,
+        )
+
+        if not directory.exists():
+            logger.error("AirUp dataset directory not found: %s", directory)
+            raise FileNotFoundError(f"AirUp dataset directory not found: {directory}")
+
+        if not directory.is_dir():
+            logger.error("AirUp dataset path is not a directory: %s", directory)
+            raise NotADirectoryError(f"AirUp dataset path is not a directory: {directory}")
+
+        pattern = self._resolve_pattern(dataset_id)
+        files: List[Path] = sorted(directory.glob(pattern))
+
+        if not files:
+            logger.error(
+                "No AirUp log files found for dataset '%s' using pattern '%s' in '%s'",
+                dataset_id.value,
+                pattern,
+                directory,
+            )
+            raise FileNotFoundError(
+                f"No AirUp log files found for {dataset_id.value} in {directory} "
+                f"with pattern '{pattern}'"
+            )
+
+        lazy_frames: List[pl.LazyFrame] = []
+
+        for file_path in files:
+            logger.debug(
+                "Scanning AirUp log file '%s' for dataset '%s'",
+                file_path,
+                dataset_id.value
+            )
+            lf = pl.scan_csv(
+                file_path,
+                has_header=config.has_header,
+                separator=config.delimiter,
+                encoding=config.encoding,
+                null_values=config.null_values,
+            )
+            lazy_frames.append(lf)
+
+        scan = lazy_frames[0] if len(lazy_frames) == 1 else pl.concat(lazy_frames)
+        df = scan.collect()
+
+        if config.rename_columns:
+            df = df.rename(config.rename_columns)
+            logger.debug(
+                "Applied column renames for AirUp dataset '%s': %s",
+                dataset_id.value,
+                config.rename_columns,
+            )
+
+        missing = set(config.required_columns) - set(df.columns)
+        if missing:
+            logger.error(
+                "Missing required columns for AirUp dataset '%s': %s",
+                dataset_id.value,
+                sorted(missing),
+            )
+            raise ValueError(
+                f"Missing required columns for AirUp dataset {dataset_id.value}: "
+                f"{sorted(missing)}"
+            )
+
+        if config.dtypes:
+            for col_name, dtype in config.dtypes.items():
+                if col_name in df.columns:
+                    df = df.with_columns(pl.col(col_name).cast(dtype))
+                    logger.debug(
+                        "Cast column '%s' to dtype '%s' for AirUp dataset '%s'",
+                        col_name,
+                        dtype,
+                        dataset_id.value,
+                    )
+                else:
+                    logger.warning(
+                        "Configured dtype for column '%s' but column not present in AirUp dataset '%s'",
+                        col_name,
+                        dataset_id.value,
+                    )
+
+        logger.info(
+            "Loaded AirUp dataset '%s' (files=%s, rows=%s, cols=%s)",
+            dataset_id.value,
+            len(files),
+            df.height,
+            df.width,
+        )
+
+        return df
+==== C:\Users\katha\CalibraFlow\core\loaders\all_contents.txt ==== 
+==== C:\Users\katha\CalibraFlow\core\loaders\airup_dataset_loader.py ==== 
+from pathlib import Path
+import logging
+from typing import List, Dict
+import polars as pl
+
+from core.interfaces.IDataLoader import IDataLoader
+from .dataset_ids import DatasetId
+from .dataset_config import Datas==== C:\Users\katha\CalibraFlow\core\loaders\csv_dataset_loader.py ==== 
+from pathlib import Path
+import logging
+from typing import Set, Dict
+import polars as pl
+
+from core.interfaces.IDataLoader import IDataLoader
+from .dataset_ids import DatasetId
+from .dataset_config import DatasetConfig, DATASET_REGISTRY
+
+logger = logging.getLogger(__name__)
+
+
+class CsvDatasetLoader(IDataLoader):
+    # loader for single-file CSV datasets
+
+    def __init__(
+        self,
+        base_path: Path,
+        registry: Dict[DatasetId, DatasetConfig] = DATASET_REGISTRY
+    ) -> None:
+        self._base_path = base_path
+        self._registry = registry
+
+    def _get_config(self, dataset_id: DatasetId) -> DatasetConfig:
+        try:
+            return self._registry[dataset_id]
+        except KeyError as exc:
+            logger.error("No DatasetConfig registered for id=%s", dataset_id.value)
+            raise KeyError(f"No DatasetConfig registered for id={dataset_id.value}") from exc
+
+    def load_dataset(self, dataset_id: DatasetId) -> pl.DataFrame:
+        config = self._get_config(dataset_id)
+        file_path = self._base_path / config.relative_path
+
+        logger.debug("Loading dataset '%s' from '%s'", dataset_id.value, file_path)
+
+        if not file_path.exists():
+            logger.error("Dataset file not found: %s", file_path)
+            raise FileNotFoundError(f"Dataset file not found: {file_path}")
+
+        scan = pl.scan_csv(
+            file_path,
+            has_header=config.has_header,
+            separator=config.delimiter,
+            encoding=config.encoding,
+            null_values=config.null_values,
+        )
+
+        schema = scan.collect_schema()
+        available: Set[str] = set(schema.names())
+
+        for col in config.parse_dates:
+            if col in available:
+                scan = scan.with_columns(
+                    pl.col(col).str.strptime(pl.Datetime, strict=False)
+                )
+                logger.debug("Parsed datetime column '%s' for dataset '%s'", col, dataset_id.value)
+            else:
+                logger.warning(
+                    "Configured datetime column '%s' not found in dataset '%s'",
+                    col,
+                    dataset_id.value,
+                )
+
+        df = scan.collect()
+
+        if config.rename_columns:
+            df = df.rename(config.rename_columns)
+            logger.debug(
+                "Applied column renames for dataset '%s': %s",
+                dataset_id.value,
+                config.rename_columns
+            )
+
+        missing = set(config.required_columns) - set(df.columns)
+        if missing:
+            logger.error(
+                "Missing required columns for dataset '%s': %s",
+                dataset_id.value,
+                sorted(missing)
+            )
+            raise ValueError(
+                f"Missing required columns for {dataset_id.value}: {sorted(missing)}"
+            )
+
+        if config.dtypes:
+            for col_name, dtype in config.dtypes.items():
+                if col_name in df.columns:
+                    df = df.with_columns(pl.col(col_name).cast(dtype))
+                    logger.debug(
+                        "Cast column '%s' to dtype '%s' for dataset '%s'",
+                        col_name, dtype, dataset_id.value
+                    )
+                else:
+                    logger.warning(
+                        "Configured dtype for column '%s', but column not present in dataset '%s'",
+                        col_name, dataset_id.value
+                    )
+
+        logger.info(
+            "Loaded dataset '%s' (rows=%s, cols=%s)",
+            dataset_id.value,
+            df.height,
+            df.width,
+        )
+
+        return df
+==== C:\Users\katha\CalibraFlow\core\loaders\dataset_config.py ==== 
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Mapping, Optional
+import polars as pl
+from .dataset_ids import DatasetId
+
+
+@dataclass(frozen=True)
+class DatasetConfig:
+    # describes how to read and normalize a dataset
+    dataset_id: DatasetId
+    relative_path: Path  # path relative to project base_path
+    parse_dates: List[str]  # raw columns that should be parsed as datetime
+    rename_columns: Mapping[str, str]  # mapping raw -> normalized column names
+    required_columns: List[str]  # columns that must be present after rename
+    dtypes: Optional[Mapping[str, pl.DataType]] = None  # optional dtype casting
+
+    # extended loader settings
+    delimiter: str = ","  # default CSV separator
+    has_header: bool = True  # default header row
+    encoding: str = "utf8"  # default encoding
+    null_values: Optional[list[str]] = None  # optional null markers
+
+
+# base folder for synthetic datasets
+BASE_SYN = Path("data/syntetische_daten_heilbronn_2021_2023")
+
+# base folder for real comparison campaign datasets (HHN / LUBW / AirUp)
+BASE_HHN = Path("data/hhn_daten_vergleichskampagne_20241115-20250205")
+
+
+DATASET_REGISTRY: Dict[DatasetId, DatasetConfig] = {
+    DatasetId.AIR_QUALITY_REFERENCE: DatasetConfig(
+        dataset_id=DatasetId.AIR_QUALITY_REFERENCE,
+        relative_path=BASE_SYN / "air_quality_reference_values_germany.csv",
+        parse_dates=[],  # timestamps are not relevant here
+        rename_columns={
+            "pollutant": "pollutant",
+        },
+        required_columns=[
+            "pollutant",
+        ],
+        dtypes=None,
+    ),
+    DatasetId.AIR_QUALITY_RAW: DatasetConfig(
+        dataset_id=DatasetId.AIR_QUALITY_RAW,
+        relative_path=BASE_SYN / "heilbronn_air_quality_2021_2023.csv",
+        parse_dates=[
+            "timestamp",
+        ],
+        rename_columns={
+            "timestamp": "timestamp",
+            "station_id": "station_id",
+        },
+        required_columns=[
+            "timestamp",
+            "station_id",
+        ],
+        dtypes=None,
+    ),
+    DatasetId.AIR_QUALITY_CALIBRATED: DatasetConfig(
+        dataset_id=DatasetId.AIR_QUALITY_CALIBRATED,
+        relative_path=BASE_SYN / "heilbronn_air_quality_2021_2023_calibrated.csv",
+        parse_dates=[
+            "timestamp",
+        ],
+        rename_columns={
+            "timestamp": "timestamp",
+            "station_id": "station_id",
+        },
+        required_columns=[
+            "timestamp",
+            "station_id",
+        ],
+        dtypes=None,
+    ),
+    DatasetId.NOISE_RAW: DatasetConfig(
+        dataset_id=DatasetId.NOISE_RAW,
+        relative_path=BASE_SYN / "heilbronn_noise_2021_2023.csv",
+        parse_dates=[
+            "timestamp",
+        ],
+        rename_columns={
+            "timestamp": "timestamp",
+            "sensor_id": "sensor_id",
+        },
+        required_columns=[
+            "timestamp",
+            "sensor_id",
+        ],
+        dtypes=None,
+    ),
+    DatasetId.NOISE_CALIBRATED: DatasetConfig(
+        dataset_id=DatasetId.NOISE_CALIBRATED,
+        relative_path=BASE_SYN / "heilbronn_noise_2021_2023_calibrated.csv",
+        parse_dates=[
+            "timestamp",
+        ],
+        rename_columns={
+            "timestamp": "timestamp",
+            "sensor_id": "sensor_id",
+        },
+        required_columns=[
+            "timestamp",
+            "sensor_id",
+        ],
+        dtypes=None,
+    ),
+    DatasetId.WEATHER_RAW: DatasetConfig(
+        dataset_id=DatasetId.WEATHER_RAW,
+        relative_path=BASE_SYN / "heilbronn_weather_2021_2023.csv",
+        parse_dates=[
+            "timestamp",
+        ],
+        rename_columns={
+            "timestamp": "timestamp",
+            "station_id": "station_id",
+        },
+        required_columns=[
+            "timestamp",
+            "station_id",
+        ],
+        dtypes=None,
+    ),
+    DatasetId.WEATHER_CALIBRATED: DatasetConfig(
+        dataset_id=DatasetId.WEATHER_CALIBRATED,
+        relative_path=BASE_SYN / "heilbronn_weather_2021_2023_calibrated.csv",
+        parse_dates=[
+            "timestamp",
+        ],
+        rename_columns={
+            "timestamp": "timestamp",
+            "station_id": "station_id",
+        },
+        required_columns=[
+            "timestamp",
+            "station_id",
+        ],
+        dtypes=None,
+    ),
+
+    # real data: LUBW minute data (single CSV file)
+    DatasetId.LUBW_MINUTE: DatasetConfig(
+        dataset_id=DatasetId.LUBW_MINUTE,
+        relative_path=BASE_HHN / "lubw" / "minute_data_lubw_full.csv",
+        parse_dates=[],  # timestamp parsing is handled by the LUBW preprocessor
+        rename_columns={
+            # normalize to the standard timestamp column name
+            "datetime": "timestamp",
+        },
+        # required columns after rename
+        required_columns=[
+            "timestamp",
+            "NO2",
+            "O3",
+            "PM10",
+            "PM2p5",
+            "TEMP",
+            "RLF",
+            "p-Luft",
+            "NSCH",
+            "WIR",
+            "WIV",
+        ],
+        dtypes=None,
+    ),
+
+    # real data: AirUp sensor SONT A (directory with multiple daily log files)
+    DatasetId.AIRUP_SONT_A: DatasetConfig(
+        dataset_id=DatasetId.AIRUP_SONT_A,
+        # points to the directory containing the daily log files
+        relative_path=BASE_HHN / "sont_a",
+        parse_dates=[],  # timestamp parsing is handled in the AirUp preprocessor
+        rename_columns={
+            # unify environmental measurements with synthetic datasets
+            "sht_humid": "humidity",
+            "sht_temp": "temperature",
+        },
+        # required columns after rename
+        required_columns=[
+            "timestamp_hr",  # human readable timestamp
+            "pm1",
+            "pm25",
+            "pm10",
+            "CO",
+            "NO",
+            "NO2",
+            "O3",
+            "humidity",
+            "temperature",
+        ],
+        dtypes=None,
+    ),
+
+    # real data: AirUp sensor SONT C (directory with multiple daily log files)
+    DatasetId.AIRUP_SONT_C: DatasetConfig(
+        dataset_id=DatasetId.AIRUP_SONT_C,
+        # points to the directory containing the daily log files
+        relative_path=BASE_HHN / "sont_c",
+        parse_dates=[],  # timestamp parsing is handled in the AirUp preprocessor
+        rename_columns={
+            "sht_humid": "humidity",
+            "sht_temp": "temperature",
+        },
+        required_columns=[
+            "timestamp_hr",
+            "pm1",
+            "pm25",
+            "pm10",
+            "CO",
+            "NO",
+            "NO2",
+            "O3",
+            "humidity",
+            "temperature",
+        ],
+        dtypes=None,
+    ),
+}
+==== C:\Users\katha\CalibraFlow\core\loaders\dataset_ids.py ==== 
+from enum import Enum
+
+class DatasetId(str, Enum):
+    # logical dataset identifiers
+    AIR_QUALITY_REFERENCE = "air_quality_reference"
+    AIR_QUALITY_RAW = "air_quality_raw"
+    AIR_QUALITY_CALIBRATED = "air_quality_calibrated"
+    NOISE_RAW = "noise_raw"
+    NOISE_CALIBRATED = "noise_calibrated"
+    WEATHER_RAW = "weather_raw"
+    WEATHER_CALIBRATED = "weather_calibrated"
+
+    LUBW_MINUTE = "lubw_minute_data"
+    AIRUP_SONT_A = "airup_sont_a_minute"
+    AIRUP_SONT_C = "airup_sont_c_minute"
+==== C:\Users\katha\CalibraFlow\core\loaders\loader_orchestrator.py ==== 
+from typing import Dict, Optional
+import logging
+import polars as pl
+
+from core.interfaces.IDataLoader import IDataLoader
+from .dataset_ids import DatasetId
+
+logger = logging.getLogger(__name__)
+
+
+class LoaderOrchestrator:
+    # coordinates loading of all datasets with override capability
+
+    def __init__(
+        self,
+        default_loader: Optional[IDataLoader] = None,
+        loader_overrides: Optional[Dict[DatasetId, IDataLoader]] = None,
+        dataset_loader: Optional[IDataLoader] = None
+    ) -> None:
+        resolved_default = default_loader or dataset_loader
+        if resolved_default is None:
+            raise ValueError("LoaderOrchestrator requires either default_loader or dataset_loader")
+
+        if not isinstance(resolved_default, IDataLoader):
+            raise TypeError("default_loader must implement IDataLoader")
+
+        self._default_loader = resolved_default
+        self._loader_overrides: Dict[DatasetId, IDataLoader] = {}
+
+        if loader_overrides:
+            for ds_id, loader in loader_overrides.items():
+                if not isinstance(loader, IDataLoader):
+                    raise TypeError(
+                        f"Override loader for dataset '{ds_id.value}' must implement IDataLoader"
+                    )
+                self._loader_overrides[ds_id] = loader
+
+    def register_loader(self, dataset_id: DatasetId, loader: IDataLoader) -> None:
+        if not isinstance(loader, IDataLoader):
+            raise TypeError(
+                f"Loader for dataset '{dataset_id.value}' must implement IDataLoader"
+            )
+        self._loader_overrides[dataset_id] = loader
+        logger.info(
+            "Registered dedicated loader for dataset '%s': %s",
+            dataset_id.value,
+            type(loader).__name__,
+        )
+
+    def get_loader(self, dataset_id: DatasetId) -> IDataLoader:
+        return self._loader_overrides.get(dataset_id, self._default_loader)
+
+    def load(self, dataset_id: DatasetId) -> pl.DataFrame:
+        loader = self.get_loader(dataset_id)
+
+        logger.info(
+            "Loading dataset '%s' via loader '%s'",
+            dataset_id.value,
+            type(loader).__name__,
+        )
+
+        df = loader.load_dataset(dataset_id)
+
+        logger.debug(
+            "Dataset '%s' loaded (rows=%s, cols=%s)",
+            dataset_id.value,
+            df.height,
+            df.width,
+        )
+
+        return df
+
+    def load_all(self, dataset_ids: list[DatasetId]) -> Dict[DatasetId, pl.DataFrame]:
+        result: Dict[DatasetId, pl.DataFrame] = {}
+        for ds_id in dataset_ids:
+            result[ds_id] = self.load(ds_id)
+
+        logger.info("Loaded %s datasets via LoaderOrchestrator", len(result))
+        return result
+==== C:\Users\katha\CalibraFlow\core\loaders\__init__.py ==== 
+==== C:\Users\katha\CalibraFlow\core\loaders\__pycache__\airup_dataset_loader.cpython-312.pyc ==== 
+Ë
+    >!iI  ã                   ó’   — d dl mZ d dlZd dlmZmZ d dlZd dlm	Z	 ddl
+mZ ddlmZmZ  ej                  e«      Z G d„ d	e	«      Zy)
+é    )ÚPathN)ÚListÚDict)ÚIDataLoaderé   )Ú	DatasetId)ÚDatasetConfigÚDATASET_REGISTRYc                   ór   — e Zd Zefdedeeef   ddfd„Zdedefd„Z	dede
+fd„Zdedej                  fd	„Zy)
+ÚAirUpDatasetLoaderÚ	base_pathÚregistryÚreturnNc                 ó    — || _         || _        y )N)Ú
+_base_pathÚ	_registry)Úselfr   r   s      ú?C:\Users\katha\CalibraFlow\core\loaders\airup_dataset_loader.pyÚ__init__zAirUpDatasetLoader.__init__   s   € ğ $ˆŒØ!ˆó    Ú
+dataset_idc                 ó¶   — 	 | j                   |   S # t        $ r>}t        j                  d|j                  «       t        d|j                  › «      |‚d }~ww xY w)Nz%No DatasetConfig registered for id=%sz#No DatasetConfig registered for id=)r   ÚKeyErrorÚloggerÚerrorÚvalue)r   r   Úexcs      r   Ú_get_configzAirUpDatasetLoader._get_config   s[   € ğ	^Ø—>‘> *Ñ-Ğ-øÜò 	^ÜL‰LĞ@À*×BRÑBRÔSÜĞ@À×AQÑAQĞ@RĞSÓTĞZ]Ğ]ûğ	^ús   ‚ ‘	Aš9AÁAc                 ó‚   — |t         j                  k(  ry|t         j                  k(  ryt        d|j                  › «      ‚)Nz(airup_sont_a_avg_every_minute_data.log.*z(airup_sont_c_avg_every_minute_data.log.*z/AirUpDatasetLoader does not support dataset_id=)r   ÚAIRUP_SONT_AÚAIRUP_SONT_CÚ
+ValueErrorr   )r   r   s     r   Ú_resolve_patternz#AirUpDatasetLoader._resolve_pattern!   s>   € àœ×/Ñ/Ò/Ø=Øœ×/Ñ/Ò/Ø=ÜĞJÈ:×K[ÑK[ĞJ\Ğ]Ó^Ğ^r   c           	      ó2  — | j                  |«      }| j                  |j                  z  }t        j	                  d|j
+                  |«       |j                  «       s$t        j                  d|«       t        d|› «      ‚|j                  «       s$t        j                  d|«       t        d|› «      ‚| j                  |«      }t        |j                  |«      «      }|sAt        j                  d|j
+                  ||«       t        d|j
+                  › d|› d	|› d
+«      ‚g }|D ]v  }t        j	                  d||j
+                  «       t        j                  ||j                   |j"                  |j$                  |j&                  ¬«      }|j)                  |«       Œx t+        |«      dk(  r|d   nt        j,                  |«      }	|	j/                  «       }
+|j0                  rF|
+j3                  |j0                  «      }
+t        j	                  d|j
+                  |j0                  «       t5        |j6                  «      t5        |
+j8                  «      z
+  }|rNt        j                  d|j
+                  t        |«      «       t;        d|j
+                  › dt        |«      › «      ‚|j<                  r§|j<                  j?                  «       D ]Š  \  }}||
+j8                  v rV|
+jA                  t        jB                  |«      jE                  |«      «      }
+t        j	                  d|||j
+                  «       Œjt        jG                  d||j
+                  «       ŒŒ t        jI                  d|j
+                  t+        |«      |
+jJ                  |
+jL                  «       |
+S )Nz.Loading AirUp dataset '%s' from directory '%s'z%AirUp dataset directory not found: %sz#AirUp dataset directory not found: z)AirUp dataset path is not a directory: %sz'AirUp dataset path is not a directory: zDNo AirUp log files found for dataset '%s' using pattern '%s' in '%s'zNo AirUp log files found for z in z with pattern 'Ú'z-Scanning AirUp log file '%s' for dataset '%s')Ú
+has_headerÚ	separatorÚencodingÚnull_valuesr   r   z1Applied column renames for AirUp dataset '%s': %sz3Missing required columns for AirUp dataset '%s': %sz+Missing required columns for AirUp dataset z: z5Cast column '%s' to dtype '%s' for AirUp dataset '%s'zMConfigured dtype for column '%s' but column not present in AirUp dataset '%s'z6Loaded AirUp dataset '%s' (files=%s, rows=%s, cols=%s))'r   r   Úrelative_pathr   Údebugr   Úexistsr   ÚFileNotFoundErrorÚis_dirÚNotADirectoryErrorr#   ÚsortedÚglobÚplÚscan_csvr&   Ú	delimiterr(   r)   ÚappendÚlenÚconcatÚcollectÚrename_columnsÚrenameÚsetÚrequired_columnsÚcolumnsr"   ÚdtypesÚitemsÚwith_columnsÚcolÚcastÚwarningÚinfoÚheightÚwidth)r   r   ÚconfigÚ	directoryÚpatternÚfilesÚlazy_framesÚ	file_pathÚlfÚscanÚdfÚmissingÚcol_nameÚdtypes                 r   Úload_datasetzAirUpDatasetLoader.load_dataset)   s&  € à×!Ñ! *Ó-ˆØ—O‘O f×&:Ñ&:Ñ:ˆ	ä‰Ø<Ø×ÑØô	
+ğ ×ÑÔ!ÜL‰LĞ@À)ÔLÜ#Ğ&IÈ)ÈĞ$UÓVĞVà×ÑÔ!ÜL‰LĞDÀiÔPÜ$Ğ'NÈyÈkĞ%ZÓ[Ğ[à×'Ñ'¨
+Ó3ˆÜ" 9§>¡>°'Ó#:Ó;ˆáÜL‰LØVØ× Ñ ØØô	ô $Ø/°
+×0@Ñ0@Ğ/AÀÀiÀ[ğ Q!Ø!( 	¨ğ,óğ ğ
+ +-ˆãˆIÜL‰LØ?ØØ× Ñ ôô
+ —‘ØØ!×,Ñ,Ø ×*Ñ*ØŸ™Ø"×.Ñ.ôˆBğ ×Ñ˜rÕ"ğ ô "% [Ó!1°QÒ!6ˆ{˜1Š~¼B¿I¹IÀkÓ<RˆØ\‰\‹^ˆà× Ò Ø—‘˜6×0Ñ0Ó1ˆBÜL‰LØCØ× Ñ Ø×%Ñ%ôô f×-Ñ-Ó.´°R·Z±Z³Ñ@ˆÙÜL‰LØEØ× Ñ Üw“ôô
+ Ø=¸j×>NÑ>NĞ=OÈrÜ˜'“?Ğ#ğ%óğ ğ
+ =Š=Ø#)§=¡=×#6Ñ#6Ö#8‘˜%Ø˜rŸz™zÑ)ØŸ™¬¯©°Ó)9×)>Ñ)>¸uÓ)EÓFBÜ—L‘LØOØ ØØ"×(Ñ(õ	ô —N‘NØgØ Ø"×(Ñ(õğ $9ô  	‰ØDØ×ÑÜ‹JØI‰IØH‰Hô	
+ğ ˆ	r   )Ú__name__Ú
+__module__Ú__qualname__r
+   r   r   r   r	   r   r   Ústrr#   r2   Ú	DataFramerS   © r   r   r   r      sy   „ ğ 4Dñ"àğ"ğ y -Ğ/Ñ0ğ"ğ 
+ó	"ğ^ iğ ^°Mó ^ğ_¨9ğ _¸ó _ğc yğ c°R·\±\ô cr   r   )Úpathlibr   ÚloggingÚtypingr   r   Úpolarsr2   Úcore.interfaces.IDataLoaderr   Údataset_idsr   Údataset_configr	   r
+   Ú	getLoggerrT   r   r   rY   r   r   Ú<module>rb      s:   ğİ Û ß Û å 3İ "ß ;à	ˆ×	Ñ	˜8Ó	$€ô˜õ r   ==== C:\Users\katha\CalibraFlow\core\loaders\__pycache__\csv_dataset_loader.cpython-312.pyc ==== 
+Ë
+    +>!i«  ã                   ó’   — d dl mZ d dlZd dlmZmZ d dlZd dlm	Z	 ddl
+mZ ddlmZmZ  ej                  e«      Z G d„ d	e	«      Zy)
+é    )ÚPathN)ÚSetÚDict)ÚIDataLoaderé   )Ú	DatasetId)ÚDatasetConfigÚDATASET_REGISTRYc                   ób   — e Zd Zefdedeeef   ddfd„Zdedefd„Z	dede
+j                  fd„Zy)	ÚCsvDatasetLoaderÚ	base_pathÚregistryÚreturnNc                 ó    — || _         || _        y )N)Ú
+_base_pathÚ	_registry)Úselfr   r   s      ú=C:\Users\katha\CalibraFlow\core\loaders\csv_dataset_loader.pyÚ__init__zCsvDatasetLoader.__init__   s   € ğ
+ $ˆŒØ!ˆó    Ú
+dataset_idc                 ó¶   — 	 | j                   |   S # t        $ r>}t        j                  d|j                  «       t        d|j                  › «      |‚d }~ww xY w)Nz%No DatasetConfig registered for id=%sz#No DatasetConfig registered for id=)r   ÚKeyErrorÚloggerÚerrorÚvalue)r   r   Úexcs      r   Ú_get_configzCsvDatasetLoader._get_config   s[   € ğ	^Ø—>‘> *Ñ-Ğ-øÜò 	^ÜL‰LĞ@À*×BRÑBRÔSÜĞ@À×AQÑAQĞ@RĞSÓTĞZ]Ğ]ûğ	^ús   ‚ ‘	Aš9AÁAc                 ó°  — | j                  |«      }| j                  |j                  z  }t        j	                  d|j
+                  |«       |j                  «       s$t        j                  d|«       t        d|› «      ‚t        j                  ||j                  |j                  |j                  |j                  ¬«      }|j                  «       }t!        |j#                  «       «      }|j$                  D ]–  }||v ro|j'                  t        j(                  |«      j*                  j-                  t        j.                  d¬«      «      }t        j	                  d||j
+                  «       Œvt        j1                  d||j
+                  «       Œ˜ |j3                  «       }|j4                  rF|j7                  |j4                  «      }t        j	                  d	|j
+                  |j4                  «       t!        |j8                  «      t!        |j:                  «      z
+  }	|	rNt        j                  d
+|j
+                  t=        |	«      «       t?        d|j
+                  › dt=        |	«      › «      ‚|j@                  r§|j@                  jC                  «       D ]Š  \  }
+}|
+|j:                  v rV|j'                  t        j(                  |
+«      jE                  |«      «      }t        j	                  d|
+||j
+                  «       Œjt        j1                  d|
+|j
+                  «       ŒŒ t        jG                  d|j
+                  |jH                  |jJ                  «       |S )NzLoading dataset '%s' from '%s'zDataset file not found: %szDataset file not found: )Ú
+has_headerÚ	separatorÚencodingÚnull_valuesF)Ústrictz,Parsed datetime column '%s' for dataset '%s'z9Configured datetime column '%s' not found in dataset '%s'z+Applied column renames for dataset '%s': %sz-Missing required columns for dataset '%s': %szMissing required columns for z: z/Cast column '%s' to dtype '%s' for dataset '%s'zHConfigured dtype for column '%s', but column not present in dataset '%s'z&Loaded dataset '%s' (rows=%s, cols=%s))&r   r   Úrelative_pathr   Údebugr   Úexistsr   ÚFileNotFoundErrorÚplÚscan_csvr    Ú	delimiterr"   r#   Úcollect_schemaÚsetÚnamesÚparse_datesÚwith_columnsÚcolÚstrÚstrptimeÚDatetimeÚwarningÚcollectÚrename_columnsÚrenameÚrequired_columnsÚcolumnsÚsortedÚ
+ValueErrorÚdtypesÚitemsÚcastÚinfoÚheightÚwidth)r   r   ÚconfigÚ	file_pathÚscanÚschemaÚ	availabler1   ÚdfÚmissingÚcol_nameÚdtypes               r   Úload_datasetzCsvDatasetLoader.load_dataset   s®  € Ø×!Ñ! *Ó-ˆØ—O‘O f×&:Ñ&:Ñ:ˆ	ä‰Ğ5°z×7GÑ7GÈÔSà×ÑÔ!ÜL‰LĞ5°yÔAÜ#Ğ&>¸y¸kĞ$JÓKĞKä{‰{ØØ×(Ñ(Ø×&Ñ&Ø—_‘_Ø×*Ñ*ô
+ˆğ ×$Ñ$Ó&ˆÜ! &§,¡,£.Ó1ˆ	à×%Ô%ˆCØiÑØ×(Ñ(Ü—F‘F˜3“K—O‘O×,Ñ,¬R¯[©[ÀĞ,ÓGóô —‘ĞKÈSĞR\×RbÑRbÕcä—‘ØOØØ×$Ñ$õğ &ğ \‰\‹^ˆà× Ò Ø—‘˜6×0Ñ0Ó1ˆBÜL‰LØ=Ø× Ñ Ø×%Ñ%ôô f×-Ñ-Ó.´°R·Z±Z³Ñ@ˆÙÜL‰LØ?Ø× Ñ Üw“ôô
+ Ø/°
+×0@Ñ0@Ğ/AÀÄFÈ7ÃOĞCTĞUóğ ğ =Š=Ø#)§=¡=×#6Ñ#6Ö#8‘˜%Ø˜rŸz™zÑ)ØŸ™¬¯©°Ó)9×)>Ñ)>¸uÓ)EÓFBÜ—L‘LØIØ  %¨×)9Ñ)9õô
+ —N‘NØbØ  *×"2Ñ"2õğ $9ô 	‰Ø4Ø×ÑØI‰IØH‰Hô		
+ğ ˆ	r   )Ú__name__Ú
+__module__Ú__qualname__r
+   r   r   r   r	   r   r   r)   Ú	DataFramerL   © r   r   r   r      sc   „ ğ 4Dñ"àğ"ğ y -Ğ/Ñ0ğ"ğ 
+ó	"ğ^ iğ ^°Mó ^ğL yğ L°R·\±\ô Lr   r   )Úpathlibr   ÚloggingÚtypingr   r   Úpolarsr)   Úcore.interfaces.IDataLoaderr   Údataset_idsr   Údataset_configr	   r
+   Ú	getLoggerrM   r   r   rQ   r   r   Ú<module>rZ      s:   ğİ Û ß Û å 3İ "ß ;à	ˆ×	Ñ	˜8Ó	$€ô^{õ ^r   ==== C:\Users\katha\CalibraFlow\core\loaders\__pycache__\dataset_config.cpython-312.pyc ==== 
+Ë
+    (<!i&  ã                   ó  — U d dl mZ d dlmZ d dlmZmZmZmZ d dl	Z
+ddlmZ  ed¬«       G d	„ d
+«      «       Z ed«      Z ed«      Zej                    eej                   edz  g ddidgd¬«      ej"                   eej"                  edz  dgdddœddgd¬«      ej$                   eej$                  edz  dgdddœddgd¬«      ej&                   eej&                  edz  dgdddœddgd¬«      ej(                   eej(                  edz  dgdddœddgd¬«      ej*                   eej*                  edz  dgdddœddgd¬«      ej,                   eej,                  edz  dgdddœddgd¬«      ej.                   eej.                  edz  dz  g ddig d¢d¬«      ej0                   eej0                  edz  g d d!d"œg d#¢d¬«      ej2                   eej2                  ed$z  g d d!d"œg d#¢d¬«      i
+Zeeef   ed%<   y)&é    )Ú	dataclass)ÚPath)ÚDictÚListÚMappingÚOptionalNé   )Ú	DatasetIdT)Úfrozenc                   óÌ   — e Zd ZU eed<   eed<   ee   ed<   eeef   ed<   ee   ed<   dZ	e
+eeej                  f      ed<   dZeed	<   d
+Zeed<   dZeed<   dZe
+ee      ed<   y)ÚDatasetConfigÚ
+dataset_idÚrelative_pathÚparse_datesÚrename_columnsÚrequired_columnsNÚdtypesÚ,Ú	delimiterTÚ
+has_headerÚutf8ÚencodingÚnull_values)Ú__name__Ú
+__module__Ú__qualname__r
+   Ú__annotations__r   r   Ústrr   r   r   ÚplÚDataTyper   r   Úboolr   r   Úlist© ó    ú9C:\Users\katha\CalibraFlow\core\loaders\dataset_config.pyr   r   	   sƒ   … ğ ÓØÓØc‘ÓØ˜C ˜HÑ%Ó%Ø˜3‘iÓØ26€FˆHW˜S "§+¡+Ğ-Ñ.Ñ/Ó6ğ €IˆsÓØ€JÓØ€HˆcÓØ'+€K˜$˜s™)Ñ$Ô+r$   r   z*data/syntetische_daten_heilbronn_2021_2023z3data/hhn_daten_vergleichskampagne_20241115-20250205z(air_quality_reference_values_germany.csvÚ	pollutant)r   r   r   r   r   r   z#heilbronn_air_quality_2021_2023.csvÚ	timestampÚ
+station_id)r'   r(   z.heilbronn_air_quality_2021_2023_calibrated.csvzheilbronn_noise_2021_2023.csvÚ	sensor_id)r'   r)   z(heilbronn_noise_2021_2023_calibrated.csvzheilbronn_weather_2021_2023.csvz*heilbronn_weather_2021_2023_calibrated.csvÚlubwzminute_data_lubw_full.csvÚdatetime)r'   ÚNO2ÚO3ÚPM10ÚPM2p5ÚTEMPÚRLFzp-LuftÚNSCHÚWIRÚWIVÚsont_aÚhumidityÚtemperature)Ú	sht_humidÚsht_temp)
+Útimestamp_hrÚpm1Úpm25Úpm10ÚCOÚNOr,   r-   r6   r7   Úsont_cÚDATASET_REGISTRY)Údataclassesr   Úpathlibr   Útypingr   r   r   r   Úpolarsr   Údataset_idsr
+   r   ÚBASE_SYNÚBASE_HHNÚAIR_QUALITY_REFERENCEÚAIR_QUALITY_RAWÚAIR_QUALITY_CALIBRATEDÚ	NOISE_RAWÚNOISE_CALIBRATEDÚWEATHER_RAWÚWEATHER_CALIBRATEDÚLUBW_MINUTEÚAIRUP_SONT_AÚAIRUP_SONT_CrA   r   r#   r$   r%   Ú<module>rS      s'  ğæ !İ ß 0Ó 0Û İ "ñ $Ô÷,ğ ,ó ğ,ñ" Ğ<Ó=€ñ ĞEÓF€ğ ×#Ñ#¡]Ø×2Ñ2ØĞ!KÑKØà˜ğ
+ğ ğ
+ğ ô&ğ ×Ñ™}Ø×,Ñ,ØĞ!FÑFàğ
+ğ %Ø&ñ
+ğ
+ Øğ
+ğ ô ğ  ×$Ñ$¡mØ×3Ñ3ØĞ!QÑQàğ
+ğ %Ø&ñ
+ğ
+ Øğ
+ğ ô'ğ  ×Ñ™Ø×&Ñ&ØĞ!@Ñ@àğ
+ğ %Ø$ñ
+ğ
+ Øğ
+ğ ôğ  ×Ñ¡Ø×-Ñ-ØĞ!KÑKàğ
+ğ %Ø$ñ
+ğ
+ Øğ
+ğ ô!ğ  ×Ñ™=Ø×(Ñ(ØĞ!BÑBàğ
+ğ %Ø&ñ
+ğ
+ Øğ
+ğ ôğ  × Ñ ¡-Ø×/Ñ/ØĞ!MÑMàğ
+ğ %Ø&ñ
+ğ
+ Øğ
+ğ ô#ğ$ ×Ñ™=Ø×(Ñ(Ø Ñ'Ğ*EÑEØğ ˜ğ
+ò
+
+ğ ô-ğ4 ×Ñ™MØ×)Ñ)à Ñ)Øğ $Ø%ñ
+ò
+ğ ô/ğ6 ×Ñ™MØ×)Ñ)à Ñ)Øà#Ø%ñ
+ò
+ğ ô+ğI{4Ğ $y -Ğ/Ñ0ô {r$   ==== C:\Users\katha\CalibraFlow\core\loaders\__pycache__\dataset_ids.cpython-312.pyc ==== 
+Ë
+    š!i  ã                   ó(   — d dl mZ  G d„ dee«      Zy)é    )ÚEnumc                   ó4   — e Zd ZdZdZdZdZdZdZdZ	dZ
+d	Zd
+Zy)Ú	DatasetIdÚair_quality_referenceÚair_quality_rawÚair_quality_calibratedÚ	noise_rawÚnoise_calibratedÚweather_rawÚweather_calibratedÚlubw_minute_dataÚairup_sont_a_minuteÚairup_sont_c_minuteN)Ú__name__Ú
+__module__Ú__qualname__ÚAIR_QUALITY_REFERENCEÚAIR_QUALITY_RAWÚAIR_QUALITY_CALIBRATEDÚ	NOISE_RAWÚNOISE_CALIBRATEDÚWEATHER_RAWÚWEATHER_CALIBRATEDÚLUBW_MINUTEÚAIRUP_SONT_AÚAIRUP_SONT_C© ó    ú6C:\Users\katha\CalibraFlow\core\loaders\dataset_ids.pyr   r      s8   „ à3ĞØ'€OØ5ĞØ€IØ)ĞØ€KØ-Ğà$€KØ(€LØ(Lr   r   N)Úenumr   Ústrr   r   r   r   Ú<module>r"      s   ğİ ô)Tõ )r   ==== C:\Users\katha\CalibraFlow\core\loaders\__pycache__\loader_orchestrator.cpython-312.pyc ==== 
+Ë
+    6>!iü
+  ã                   ót   — d dl mZmZ d dlZd dlZd dlmZ ddlm	Z	  ej                  e«      Z G d„ d«      Zy)é    )ÚDictÚOptionalN)ÚIDataLoaderé   )Ú	DatasetIdc            	       óÄ   — e Zd Z	 	 	 ddee   deeeef      dee   ddfd„Zdededdfd	„Zdedefd
+„Z	dede
+j                  fd„Zdee   deee
+j                  f   fd„Zy)ÚLoaderOrchestratorNÚdefault_loaderÚloader_overridesÚdataset_loaderÚreturnc                 ó"  — |xs |}|€t        d«      ‚t        |t        «      st        d«      ‚|| _        i | _        |rQ|j                  «       D ]=  \  }}t        |t        «      st        d|j                  › d«      ‚|| j
+                  |<   Œ? y y )NzCLoaderOrchestrator requires either default_loader or dataset_loaderz)default_loader must implement IDataLoaderzOverride loader for dataset 'ú' must implement IDataLoader)Ú
+ValueErrorÚ
+isinstancer   Ú	TypeErrorÚ_default_loaderÚ_loader_overridesÚitemsÚvalue)Úselfr
+   r   r   Úresolved_defaultÚds_idÚloaders          ú>C:\Users\katha\CalibraFlow\core\loaders\loader_orchestrator.pyÚ__init__zLoaderOrchestrator.__init__   s¡   € ğ *Ò;¨^ĞØĞ#ÜĞbÓcĞcäĞ*¬KÔ8ÜĞGÓHĞHà/ˆÔØ?AˆÔáØ!1×!7Ñ!7Ö!9‘vÜ! &¬+Ô6Ü#Ø7¸¿¹°}ĞD`Ğaóğ ğ 17×&Ñ& uÒ-ñ ":ğ ó    Ú
+dataset_idr   c                 óÜ   — t        |t        «      st        d|j                  › d«      ‚|| j                  |<   t
+        j                  d|j                  t        |«      j                  «       y )NzLoader for dataset 'r   z0Registered dedicated loader for dataset '%s': %s)	r   r   r   r   r   ÚloggerÚinfoÚtypeÚ__name__)r   r   r   s      r   Úregister_loaderz"LoaderOrchestrator.register_loader&   sd   € Ü˜&¤+Ô.ÜØ& z×'7Ñ'7Ğ&8Ğ8TĞUóğ ğ .4ˆ×Ñ˜zÑ*Ü‰Ø>Ø×ÑÜ‹L×!Ñ!õ	
+r   c                 óN   — | j                   j                  || j                  «      S )N)r   Úgetr   )r   r   s     r   Ú
+get_loaderzLoaderOrchestrator.get_loader2   s!   € Ø×%Ñ%×)Ñ)¨*°d×6JÑ6JÓKĞKr   c                 ó  — | j                  |«      }t        j                  d|j                  t	        |«      j
+                  «       |j                  |«      }t        j                  d|j                  |j                  |j                  «       |S )Nz$Loading dataset '%s' via loader '%s'z&Dataset '%s' loaded (rows=%s, cols=%s))
+r'   r    r!   r   r"   r#   Úload_datasetÚdebugÚheightÚwidth)r   r   r   Údfs       r   ÚloadzLoaderOrchestrator.load5   st   € Ø—‘ Ó,ˆä‰Ø2Ø×ÑÜ‹L×!Ñ!ô	
+ğ × Ñ  Ó,ˆä‰Ø4Ø×ÑØI‰IØH‰Hô		
+ğ ˆ	r   Údataset_idsc                 ó~   — i }|D ]  }| j                  |«      ||<   Œ t        j                  dt        |«      «       |S )Nz)Loaded %s datasets via LoaderOrchestrator)r.   r    r!   Úlen)r   r/   Úresultr   s       r   Úload_allzLoaderOrchestrator.load_allI   s=   € Ø02ˆÛ ˆEØ ŸI™I eÓ,ˆF5ŠMğ !ô 	‰Ğ?ÄÀVÃÔMØˆr   )NNN)r#   Ú
+__module__Ú__qualname__r   r   r   r   r   r$   r'   ÚplÚ	DataFramer.   Úlistr3   © r   r   r	   r	      s½   „ ğ
+ 15ØCGØ04ñ	7à  Ñ-ğ7ğ # 4¨	°;Ğ(>Ñ#?Ñ@ğ7ğ ! Ñ-ğ	7ğ
+ 
+ó7ğ0
+
+¨)ğ 
+
+¸[ğ 
+
+ÈTó 
+
+ğL Yğ L°;ó Lğ˜yğ ¨R¯\©\ó ğ( D¨¡Oğ ¸¸YÈÏÉĞ=TÑ8Uô r   r	   )Útypingr   r   ÚloggingÚpolarsr6   Úcore.interfaces.IDataLoaderr   r/   r   Ú	getLoggerr#   r    r	   r9   r   r   Ú<module>r?      s2   ğß !Û Û å 3İ "à	ˆ×	Ñ	˜8Ó	$€÷Dò Dr   ==== C:\Users\katha\CalibraFlow\core\loaders\__pycache__\__init__.cpython-312.pyc ==== 
+Ë
+    ã i    ã                    ó   — y )N© r   ó    ú3C:\Users\katha\CalibraFlow\core\loaders\__init__.pyÚ<module>r      s   ñr   

@@ -1,11 +1,340 @@
 ==== C:\Users\katha\CalibraFlow\core\all_contents.txt ==== 
 ==== C:\Users\katha\CalibraFlow\core\all_contents.txt ==== 
 ==== C:\Users\katha\CalibraFlow\core\__init__.py ==== 
+==== C:\Users\katha\CalibraFlow\core\anomalies\AnomalyOrchestrator.py ==== 
+import logging
+from typing import Sequence
+import polars as pl
+from core.interfaces.IAnomalyDetector import IAnomalyDetector
+
+logger = logging.getLogger(__name__)
+
+class AnomalyOrchestrator:
+    # orchestrates anomaly detection on preprocessed datasets
+
+    def __init__(self, detector: IAnomalyDetector) -> None:
+        # dependency injected detector implementation
+        self._detector = detector
+
+    def fit_on_reference(
+        self,
+        df_reference: pl.DataFrame,
+        feature_columns: Sequence[str],
+    ) -> None:
+        # train anomaly detector on (assumed) mostly normal reference data
+        logger.info("Fitting anomaly detector on reference dataset")
+        self._detector.fit(df_reference, feature_columns)
+
+    def run_detection(
+        self,
+        df_target: pl.DataFrame,
+        threshold: float,
+    ) -> pl.DataFrame:
+        # run anomaly detection on target dataset and return annotated dataframe
+        logger.info(
+            "Running anomaly detection (threshold=%s) on target dataset",
+            threshold,
+        )
+        result = self._detector.detect(df_target, threshold)
+        return result
 ==== C:\Users\katha\CalibraFlow\core\anomalies\IsolationForestDetector.py ==== 
+import logging
+from typing import Sequence
+import polars as pl
+import numpy as np
+from sklearn.ensemble import IsolationForest
+from core.interfaces.IAnomalyDetector import IAnomalyDetector
+
+logger = logging.getLogger(__name__)
+
+# numeric dtype set for polars
+_NUMERIC_DTYPES = {
+    pl.Int8, pl.Int16, pl.Int32, pl.Int64,
+    pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64,
+    pl.Float32, pl.Float64,
+}
+
+def _is_numeric_dtype(dtype) -> bool:
+    return dtype in _NUMERIC_DTYPES
+
+
+class IsolationForestDetector(IAnomalyDetector):
+    # wrapper around sklearn IsolationForest for multivariate anomaly detection
+
+    def __init__(
+        self,
+        n_estimators: int = 100,
+        contamination: float | None = 0.01,
+        random_state: int | None = 42,
+    ) -> None:
+        self._model = IsolationForest(
+            n_estimators=n_estimators,
+            contamination=contamination,
+            random_state=random_state,
+        )
+        self._feature_columns: Sequence[str] = []
+
+    def fit(self, df: pl.DataFrame, feature_columns: Sequence[str]) -> None:
+        if df.is_empty():
+            raise ValueError("Cannot fit IsolationForest on empty dataframe")
+
+        self._feature_columns = list(feature_columns)
+
+        for col in self._feature_columns:
+            if col not in df.columns:
+                raise ValueError(f"Feature column '{col}' not in dataframe")
+
+            if not _is_numeric_dtype(df[col].dtype):
+                raise TypeError(f"Feature column '{col}' must be numeric")
+
+        X = df.select(self._feature_columns).to_numpy()
+        self._model.fit(X)
+
+        logger.info(
+            "Fitted IsolationForest on columns: %s (n_samples=%s)",
+            self._feature_columns,
+            X.shape[0],
+        )
+
+    def score(self, df: pl.DataFrame) -> pl.DataFrame:
+        if not self._feature_columns:
+            raise RuntimeError("IsolationForestDetector must be fitted before 'score'")
+
+        for col in self._feature_columns:
+            if col not in df.columns:
+                raise ValueError(f"Feature column '{col}' not present at scoring time")
+
+        X = df.select(self._feature_columns).to_numpy()
+
+        # sklearn: more negative = more anomalous
+        raw_scores = self._model.score_samples(X)
+        anomaly_score = -raw_scores
+
+        anomaly_score = anomaly_score - float(np.min(anomaly_score))
+        max_val = float(np.max(anomaly_score))
+        if max_val > 0:
+            anomaly_score = anomaly_score / max_val
+
+        scored = df.with_columns(
+            pl.Series("anomaly_score", anomaly_score.tolist())
+        )
+
+        return scored
+
+    def detect(self, df: pl.DataFrame, threshold: float) -> pl.DataFrame:
+        scored = self.score(df)
+
+        scored = scored.with_columns(
+            (pl.col("anomaly_score") >= threshold).alias("is_anomaly")
+        )
+
+        return scored
 ==== C:\Users\katha\CalibraFlow\core\anomalies\ZScoreDetector.py ==== 
+import logging
+from typing import Dict, Sequence, Tuple
+import polars as pl
+from core.interfaces.IAnomalyDetector import IAnomalyDetector
+
+logger = logging.getLogger(__name__)
+
+_NUMERIC_DTYPES = {
+    pl.Int8, pl.Int16, pl.Int32, pl.Int64,
+    pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64,
+    pl.Float32, pl.Float64,
+}
+
+def _is_numeric_dtype(dtype) -> bool:
+    return dtype in _NUMERIC_DTYPES
+
+
+class ZScoreDetector(IAnomalyDetector):
+
+    def __init__(self) -> None:
+        self._stats: Dict[str, Tuple[float, float]] = {}
+        self._feature_columns: Sequence[str] = []
+
+    def fit(self, df: pl.DataFrame, feature_columns: Sequence[str]) -> None:
+        if df.is_empty():
+            raise ValueError("Cannot fit ZScoreDetector on empty dataframe")
+
+        self._feature_columns = list(feature_columns)
+        n = df.height
+
+        for col in self._feature_columns:
+            if col not in df.columns:
+                raise ValueError(f"Feature column '{col}' not in dataframe")
+
+            series = df[col]
+
+            if not _is_numeric_dtype(series.dtype):
+                raise TypeError(f"Feature column '{col}' must be numeric, got {series.dtype}")
+
+            mean_val = float(series.mean())
+
+            # stabilization for small sample sizes
+            if n < 3:
+                # minimal variance assumption → treat extreme values as anomalous
+                std_val = 1.0
+            else:
+                std_val = float(series.std())
+                if std_val == 0.0 or std_val != std_val:
+                    std_val = 1.0
+
+            self._stats[col] = (mean_val, std_val)
+
+        logger.info("Fitted ZScoreDetector on columns: %s", self._feature_columns)
+
+    def score(self, df: pl.DataFrame) -> pl.DataFrame:
+        if not self._stats:
+            raise RuntimeError("ZScoreDetector must be fitted before calling 'score'")
+
+        working = df.clone()
+        z_expressions = []
+
+        for col in self._feature_columns:
+            mean_val, std_val = self._stats[col]
+
+            z_expr = (
+                (pl.col(col) - mean_val)
+                .cast(pl.Float64)
+                .truediv(std_val)
+                .alias(f"z_{col}")
+            )
+            z_expressions.append(z_expr)
+
+        working = working.with_columns(z_expressions)
+
+        abs_cols = [f"z_{c}" for c in self._feature_columns]
+
+        working = working.with_columns(
+            pl.concat_list([pl.col(c).abs() for c in abs_cols])
+            .list.mean()
+            .alias("anomaly_score")
+        )
+
+        return working
+
+    def detect(self, df: pl.DataFrame, threshold: float) -> pl.DataFrame:
+        scored = self.score(df)
+        scored = scored.with_columns(
+            (pl.col("anomaly_score") >= threshold).alias("is_anomaly")
+        )
+        return scored
+==== C:\Users\katha\CalibraFlow\core\anomalies\__init__.py ==== 
 ==== C:\Users\katha\CalibraFlow\core\calibration\CalibrationStub.py ==== 
+==== C:\Users\katha\CalibraFlow\core\features\RollingFeatureEngineer.py ==== 
+import polars as pl
+from typing import Sequence, List
+
+
+class RollingFeatureEngineer:
+    # Robust time-based rolling windows (Polars >= 1.20)
+
+    def add_rolling_features(
+        self,
+        df: pl.DataFrame,
+        feature_columns: Sequence[str],
+        windows: Sequence[str],
+    ) -> pl.DataFrame:
+
+        if df.is_empty():
+            return df
+
+        if "timestamp" not in df.columns:
+            raise ValueError("DataFrame must contain a 'timestamp' column")
+
+        # ensure timestamp is datetime
+        working = df.with_columns(
+            pl.col("timestamp").str.strptime(pl.Datetime, strict=False)
+        )
+
+        exprs: List[pl.Expr] = []
+
+        for col in feature_columns:
+            if col not in working.columns:
+                raise ValueError(f"Feature column '{col}' not in DataFrame")
+
+            # require numeric dtype
+            if working[col].dtype not in pl.NUMERIC_DTYPES:
+                raise TypeError(f"Feature '{col}' must be numeric")
+
+            for win in windows:
+                # rolling returns list -> use .list.mean() / .list.std()
+                roll = (
+                    pl.col(col)
+                    .rolling(index_column="timestamp", period=win, closed="right")
+                )
+
+                exprs.append(
+                    roll.list.mean().alias(f"{col}_roll_mean_{win}")
+                )
+                exprs.append(
+                    roll.list.std().alias(f"{col}_roll_std_{win}")
+                )
+
+        return working.with_columns(exprs)
 ==== C:\Users\katha\CalibraFlow\core\features\TimeFeatureEngineer.py ==== 
+import polars as pl
+
+class TimeFeatureEngineer:
+    # add derived time-based features to a dataframe containing a datetime column 'timestamp'
+
+    def add_time_features(self, df: pl.DataFrame) -> pl.DataFrame:
+        if "timestamp" not in df.columns:
+            raise ValueError("Expected column 'timestamp' in dataframe")
+
+        # robust timestamp parsing
+        working = df.with_columns(
+            pl.col("timestamp")
+            .str.strptime(pl.Datetime, strict=False)
+            .alias("timestamp")
+        )
+
+        # season mapping helper
+        def season_expr(col):
+            return (
+                pl.when(col.is_in([12, 1, 2])).then(0)  # winter
+                .when(col.is_in([3, 4, 5])).then(1)     # spring
+                .when(col.is_in([6, 7, 8])).then(2)     # summer
+                .otherwise(3)                           # fall
+            )
+
+        # compute weekday in Python convention:
+        # Monday=0, Sunday=6
+        weekday_expr = (pl.col("timestamp").dt.weekday() - 1)
+
+        working = working.with_columns([
+            pl.col("timestamp").dt.hour().alias("hour"),
+            weekday_expr.alias("day_of_week"),
+            pl.col("timestamp").dt.month().alias("month"),
+            pl.col("timestamp").dt.year().alias("year"),
+            (weekday_expr >= 5).alias("is_weekend"),  # Saturday(5), Sunday(6)
+            season_expr(pl.col("timestamp").dt.month()).alias("season"),
+        ])
+
+        return working
 ==== C:\Users\katha\CalibraFlow\core\interfaces\IAnomalyDetector.py ==== 
+from abc import ABC, abstractmethod
+from typing import Sequence
+import polars as pl
+
+class IAnomalyDetector(ABC):
+    # contract for all anomaly detectors in the system
+
+    @abstractmethod
+    def fit(self, df: pl.DataFrame, feature_columns: Sequence[str]) -> None:
+        # train the detector on (assumed) mostly normal data
+        pass
+
+    @abstractmethod
+    def score(self, df: pl.DataFrame) -> pl.DataFrame:
+        # compute anomaly scores for each row and return df with extra column 'anomaly_score'
+        pass
+
+    @abstractmethod
+    def detect(self, df: pl.DataFrame, threshold: float) -> pl.DataFrame:
+        # apply a threshold to 'anomaly_score' and return df with extra boolean column 'is_anomaly'
+        pass
 ==== C:\Users\katha\CalibraFlow\core\interfaces\ICalibrationModel.py ==== 
 ==== C:\Users\katha\CalibraFlow\core\interfaces\IDataLoader.py ==== 
 from abc import ABC, abstractmethod
