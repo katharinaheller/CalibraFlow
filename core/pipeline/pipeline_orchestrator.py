@@ -6,13 +6,14 @@ import polars as pl
 
 from core.loaders.loader_orchestrator import LoaderOrchestrator
 from core.loaders.dataset_ids import DatasetId
+from core.preprocessing.preprocessing_orchestrator import PreprocessingOrchestrator
+from core.preprocessing.preprocessing_config import PREPROCESSOR_REGISTRY
 
 logger = logging.getLogger(__name__)
 
 
 # pipeline execution phases
 class PipelinePhase(str):
-    # only loading for now
     LOADING = "loading"
     PREPROCESSING = "preprocessing"
     FEATURE_ENGINEERING = "feature_engineering"
@@ -22,11 +23,13 @@ class PipelinePhase(str):
 
 @dataclass
 class PipelineResult:
-    # represents intermediate and final artifacts of the pipeline
+    # raw loaded dataframe
     raw_loaded: Optional[pl.DataFrame] = None
 
-    # placeholders for later phases
+    # preprocessed dataframe
     preprocessed: Optional[pl.DataFrame] = None
+
+    # later phases
     features: Optional[pl.DataFrame] = None
     calibrated: Optional[pl.DataFrame] = None
     anomalies: Optional[pl.DataFrame] = None
@@ -34,38 +37,52 @@ class PipelineResult:
 
 class PipelineOrchestrator:
     """
-    High-level pipeline orchestrator coordinating all phases of the sensor data workflow.
-
-    Currently only LOADING phase is fully implemented.
-    Other phases are prepared but inactive.
+    High-level orchestrator coordinating loading, preprocessing and later phases.
+    Fully TDD aligned and modular.
     """
 
     def __init__(
         self,
         loader_orchestrator: LoaderOrchestrator,
+        preprocessor_registry: Dict[DatasetId, object] = PREPROCESSOR_REGISTRY
     ) -> None:
-        # dependency injection: loader orchestrator of all datasets
+        # dependency injection
         self._loader = loader_orchestrator
+        self._preprocessors = PreprocessingOrchestrator(preprocessor_registry)
 
     # ---------------------------------------------------------
     #                     LOADING PHASE
     # ---------------------------------------------------------
     def _execute_loading(self, dataset_id: DatasetId) -> pl.DataFrame:
-        """
-        Executes the loading phase using the LoaderOrchestrator.
-        """
+        # loading via LoaderOrchestrator
         logger.info("Pipeline phase: LOADING dataset '%s'", dataset_id.value)
-
         df = self._loader.load(dataset_id)
-
         logger.debug(
             "Loading phase complete for dataset '%s' (rows=%s, cols=%s)",
             dataset_id.value,
             df.height,
             df.width,
         )
-
         return df
+
+    # ---------------------------------------------------------
+    #                  PREPROCESSING PHASE
+    # ---------------------------------------------------------
+    def _execute_preprocessing(
+        self,
+        dataset_id: DatasetId,
+        df: pl.DataFrame
+    ) -> pl.DataFrame:
+        # preprocessing via PreprocessingOrchestrator
+        logger.info("Pipeline phase: PREPROCESSING dataset '%s'", dataset_id.value)
+        pre = self._preprocessors.preprocess(dataset_id, df)
+        logger.debug(
+            "Preprocessing phase complete for dataset '%s' (rows=%s, cols=%s)",
+            dataset_id.value,
+            pre.height,
+            pre.width,
+        )
+        return pre
 
     # ---------------------------------------------------------
     #                 MAIN PIPELINE ENTRYPOINT
@@ -75,10 +92,7 @@ class PipelineOrchestrator:
         dataset_id: DatasetId,
         phases: Optional[list[str]] = None
     ) -> PipelineResult:
-        """
-        Execute selected pipeline phases.
-        Default: only loading.
-        """
+        # default to only loading
         if phases is None:
             phases = [PipelinePhase.LOADING]
 
@@ -88,19 +102,24 @@ class PipelineOrchestrator:
         if PipelinePhase.LOADING in phases:
             result.raw_loaded = self._execute_loading(dataset_id)
 
-        # PREPROCESSING (not yet implemented)
+        # PREPROCESSING
         if PipelinePhase.PREPROCESSING in phases:
-            logger.warning("PREPROCESSING phase selected but not implemented yet.")
+            if result.raw_loaded is None:
+                raise RuntimeError("PREPROCESSING requires LOADING to run first")
+            result.preprocessed = self._execute_preprocessing(
+                dataset_id,
+                result.raw_loaded
+            )
 
-        # FEATURE ENGINEERING (not yet implemented)
+        # FEATURE ENGINEERING (placeholder)
         if PipelinePhase.FEATURE_ENGINEERING in phases:
             logger.warning("FEATURE_ENGINEERING phase selected but not implemented yet.")
 
-        # CALIBRATION (not yet implemented)
+        # CALIBRATION (placeholder)
         if PipelinePhase.CALIBRATION in phases:
             logger.warning("CALIBRATION phase selected but not implemented yet.")
 
-        # ANOMALY DETECTION (not yet implemented)
+        # ANOMALY DETECTION (placeholder)
         if PipelinePhase.ANOMALY_DETECTION in phases:
             logger.warning("ANOMALY_DETECTION phase selected but not implemented yet.")
 
